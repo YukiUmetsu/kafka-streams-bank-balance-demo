@@ -15,7 +15,7 @@ Both input and output payloads use Avro schemas registered in Schema Registry.
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
     P[TransactionProducer]
     IT[bank-transactions]
     S[UserBalanceStream]
@@ -33,9 +33,28 @@ flowchart LR
     S -.->|schema lookup| SR
     C -.->|schema lookup| SR
 
-    UI --> IT
-    UI --> OT
-    UI --> SR
+    UI -.-> IT
+    UI -.-> OT
+    UI -.-> SR
+
+    style P fill:#eff6ff,stroke:#1d4ed8,stroke-width:2px,color:#111827
+    style C fill:#eff6ff,stroke:#1d4ed8,stroke-width:2px,color:#111827
+    style IT fill:#ecfeff,stroke:#0f766e,stroke-width:4px,color:#111827
+    style OT fill:#ecfeff,stroke:#0f766e,stroke-width:4px,color:#111827
+    style S fill:#fef3c7,stroke:#b45309,stroke-width:3px,color:#111827
+    style SR fill:#f9fafb,stroke:#9ca3af,stroke-width:1px,color:#4b5563
+    style UI fill:#f9fafb,stroke:#9ca3af,stroke-width:1px,color:#4b5563
+
+    linkStyle 0 stroke:#2563eb,stroke-width:4px
+    linkStyle 1 stroke:#2563eb,stroke-width:4px
+    linkStyle 2 stroke:#2563eb,stroke-width:4px
+    linkStyle 3 stroke:#2563eb,stroke-width:4px
+    linkStyle 4 stroke:#9ca3af,stroke-width:1.5px
+    linkStyle 5 stroke:#9ca3af,stroke-width:1.5px
+    linkStyle 6 stroke:#9ca3af,stroke-width:1.5px
+    linkStyle 7 stroke:#9ca3af,stroke-width:1.5px
+    linkStyle 8 stroke:#9ca3af,stroke-width:1.5px
+    linkStyle 9 stroke:#9ca3af,stroke-width:1.5px
 ```
 
 ## Data model
