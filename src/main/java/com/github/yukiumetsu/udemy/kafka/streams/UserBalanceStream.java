@@ -8,6 +8,7 @@ import org.apache.avro.LogicalTypes;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.KafkaStreams;
 import org.apache.kafka.streams.StreamsBuilder;
+import org.apache.kafka.streams.Topology;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.errors.StreamsUncaughtExceptionHandler;
 import org.apache.kafka.streams.kstream.*;
@@ -32,26 +33,7 @@ public class UserBalanceStream {
     private static final SpecificAvroSerde<Transaction> TRANSACTION_SERDE = new SpecificAvroSerde<>();
 
     public static void main(String[] args) {
-        Map<String, String> serdeConfig = Map.of("schema.registry.url", SCHEMA_REGISTRY_URL);
-        TRANSACTION_SERDE.configure(serdeConfig, false);
-        USER_BALANCE_SERDE.configure(serdeConfig, false);
-
-        StreamsBuilder builder = new StreamsBuilder();
-        KStream<String, Transaction> transactionStream = builder.stream(INPUT_TOPIC);
-        KTable<String, UserBalance> userBalanceTable = transactionStream
-                .groupByKey(Grouped.with(Serdes.String(), TRANSACTION_SERDE))
-                .aggregate(
-                        () -> UserBalance.newBuilder()
-                                .setName("")
-                                .setAmount(toAmountBytes(BigDecimal.ZERO))
-                                .setTime(Instant.EPOCH)
-                                .build(),
-                        UserBalanceStream::aggregateUserBalance,
-                        Materialized.with(Serdes.String(), USER_BALANCE_SERDE)
-                );
-        userBalanceTable.toStream().to(OUTPUT_TOPIC, Produced.with(Serdes.String(), USER_BALANCE_SERDE));
-
-        KafkaStreams streams = new KafkaStreams(builder.build(), getNewStreamProperties());
+        KafkaStreams streams = new KafkaStreams(buildTopology(), streamProperties());
         // Keep the main thread blocked until shutdown or a fatal stream error.
         // The latch starts at 1, `await()` waits, and `countDown()` releases it.
         CountDownLatch latch = new CountDownLatch(1);
@@ -78,7 +60,28 @@ public class UserBalanceStream {
         }
     }
 
-    private static UserBalance aggregateUserBalance(String name, Transaction transaction, UserBalance userBalance) {
+    static Topology buildTopology() {
+        return buildTopology(serdeConfig());
+    }
+
+    static Topology buildTopology(Map<String, String> serdeConfig) {
+        TRANSACTION_SERDE.configure(serdeConfig, false);
+        USER_BALANCE_SERDE.configure(serdeConfig, false);
+
+        StreamsBuilder builder = new StreamsBuilder();
+        KStream<String, Transaction> transactionStream = builder.stream(INPUT_TOPIC);
+        KTable<String, UserBalance> userBalanceTable = transactionStream
+                .groupByKey(Grouped.with(Serdes.String(), TRANSACTION_SERDE))
+                .aggregate(
+                        UserBalanceStream::emptyUserBalance,
+                        UserBalanceStream::aggregateUserBalance,
+                        Materialized.with(Serdes.String(), USER_BALANCE_SERDE)
+                );
+        userBalanceTable.toStream().to(OUTPUT_TOPIC, Produced.with(Serdes.String(), USER_BALANCE_SERDE));
+        return builder.build();
+    }
+
+    static UserBalance aggregateUserBalance(String name, Transaction transaction, UserBalance userBalance) {
         BigDecimal currentAmount = fromBytesToDecimal(userBalance.getAmount());
         BigDecimal incomingAmount = fromBytesToDecimal(transaction.getAmount());
         Instant latestTime = userBalance.getTime().isAfter(transaction.getTime()) ? userBalance.getTime() : transaction.getTime();
@@ -89,7 +92,19 @@ public class UserBalanceStream {
                 .build();
     }
 
-    private static Properties getNewStreamProperties() {
+    static UserBalance emptyUserBalance() {
+        return UserBalance.newBuilder()
+                .setName("")
+                .setAmount(toAmountBytes(BigDecimal.ZERO))
+                .setTime(Instant.EPOCH)
+                .build();
+    }
+
+    static Map<String, String> serdeConfig() {
+        return Map.of("schema.registry.url", SCHEMA_REGISTRY_URL);
+    }
+
+    static Properties streamProperties() {
         Properties props = new Properties();
         props.put(StreamsConfig.APPLICATION_ID_CONFIG, "user-balance-stream");
         props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);
@@ -100,7 +115,7 @@ public class UserBalanceStream {
         return props;
     }
 
-    private static BigDecimal fromBytesToDecimal(ByteBuffer buffer) {
+    static BigDecimal fromBytesToDecimal(ByteBuffer buffer) {
         return new Conversions.DecimalConversion().fromBytes(
                 buffer,
                 Transaction.getClassSchema().getField("amount").schema(),

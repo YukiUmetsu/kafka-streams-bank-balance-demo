@@ -48,13 +48,8 @@ public class TransactionProducer {
         try(producer) {
             while (true) {
                 String name = NAMES.get(ThreadLocalRandom.current().nextInt(NAMES.size()));
-                Transaction transaction = Transaction
-                        .newBuilder()
-                        .setName(name)
-                        .setAmount(getRandomAmountBytes())
-                        .setTime(Instant.now())
-                        .build();
-                ProducerRecord<String, Transaction> record = new ProducerRecord<>(INPUT_TOPIC, name, transaction);
+                Transaction transaction = newTransaction(name, randomAmount(), Instant.now());
+                ProducerRecord<String, Transaction> record = newProducerRecord(transaction);
                 producer.send(record, (recordMetadata, e) -> {
                     if (e != null) {
                         LOG.error("Failed to send record for name={}", name, e);
@@ -74,6 +69,10 @@ public class TransactionProducer {
     }
 
     public static Producer<String, Transaction> createProducer() {
+        return new KafkaProducer<>(producerProperties());
+    }
+
+    static Properties producerProperties() {
         Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);
         props.put(ProducerConfig.ACKS_CONFIG, "all");
@@ -82,7 +81,7 @@ public class TransactionProducer {
         props.put("schema.registry.url", SCHEMA_REGISTRY_URL);
         props.put(ProducerConfig.RETRIES_CONFIG, 3);
         props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, "true");
-        return new KafkaProducer<>(props);
+        return props;
     }
 
     public static void createTopicIfMissing(String topic) {
@@ -114,6 +113,18 @@ public class TransactionProducer {
     private static BigDecimal randomAmount() {
         double raw = ThreadLocalRandom.current().nextDouble(0.01, 1000.00);
         return BigDecimal.valueOf(raw).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    static Transaction newTransaction(String name, BigDecimal amount, Instant time) {
+        return Transaction.newBuilder()
+                .setName(name)
+                .setAmount(toAmountBytes(amount))
+                .setTime(time)
+                .build();
+    }
+
+    static ProducerRecord<String, Transaction> newProducerRecord(Transaction transaction) {
+        return new ProducerRecord<>(INPUT_TOPIC, transaction.getName(), transaction);
     }
 
     public static ByteBuffer toAmountBytes(BigDecimal amount) {
