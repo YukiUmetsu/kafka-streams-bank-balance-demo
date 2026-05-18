@@ -57,6 +57,89 @@ flowchart TB
     linkStyle 9 stroke:#9ca3af,stroke-width:1.5px
 ```
 
+## Local access
+
+After starting the local stack, open:
+
+- Kafka UI: `http://localhost:8080`
+- Schema Registry API: `http://localhost:8081`
+- Kafka broker for local apps: `127.0.0.1:9092`
+
+The Docker setup for these services is in [docker-compose.yml](/Users/yukiumetsu/Documents/projects/udemy/kafka-streams-code/own-code/bank-balance-stream/docker-compose.yml:1).
+
+In Kafka UI, connect to the `local` cluster and inspect:
+
+- topic `bank-transactions`
+- topic `user-balance`
+- registered Avro subjects in Schema Registry
+
+## Why idempotence matters
+
+This application updates balances. That is stateful and sensitive to duplicates.
+
+If the producer retries a send and Kafka accepts the same logical event twice, or if the stream app reprocesses records after a failure without transactional guarantees, balances can be overstated. For money-like aggregates, that is the wrong failure mode.
+
+Kafka gives us the primitives to avoid that:
+
+- idempotent producer writes prevent duplicate records caused by producer retries
+- Kafka Streams exactly-once processing keeps state-store updates and output-topic writes in one transactional unit
+
+For this repo, the practical goal is:
+
+1. a transaction should be written once to `bank-transactions` even when the producer retries
+2. each input record should contribute once to the `user-balance` aggregate
+3. the updated state and the emitted `user-balance` record should succeed or fail together
+
+## Reliability configuration used here
+
+### Producer requirements
+
+The producer config lives in [TransactionProducer.java](/Users/yukiumetsu/Documents/projects/udemy/kafka-streams-code/own-code/bank-balance-stream/src/main/java/com/github/yukiumetsu/udemy/kafka/streams/TransactionProducer.java:76).
+
+Important settings:
+
+- `acks=all`
+- `retries=3`
+- `enable.idempotence=true`
+
+Why these matter:
+
+- `enable.idempotence=true` tells Kafka to deduplicate retry-driven resend attempts from the same producer session
+- `acks=all` requires the broker leader to wait for all in-sync replicas before acknowledging a write
+- `retries=3` lets the client retry transient failures instead of dropping records immediately
+
+In practice, Kafka also requires compatible producer settings for idempotence. This code sets the two most visible ones explicitly:
+
+- `acks=all`
+- `enable.idempotence=true`
+
+On a real multi-broker production cluster, you would also care about replication and ISR durability. This demo runs with replication factor `1`, which is fine for local development but not for production durability.
+
+### Streams application requirements
+
+The Kafka Streams config lives in [UserBalanceStream.java](/Users/yukiumetsu/Documents/projects/udemy/kafka-streams-code/own-code/bank-balance-stream/src/main/java/com/github/yukiumetsu/udemy/kafka/streams/UserBalanceStream.java:92).
+
+Important setting:
+
+- `processing.guarantee=exactly_once_v2`
+
+Why it matters:
+
+- Kafka Streams writes changelog/state updates and output records transactionally
+- committed input offsets are coordinated with those writes
+- on restart or failure, the app avoids double-applying already completed work
+
+That is the key protection for this pipeline, because `UserBalanceStream` is not just forwarding records. It is maintaining a running aggregate per user.
+
+### Broker-side support in local Docker
+
+The local broker in [docker-compose.yml](/Users/yukiumetsu/Documents/projects/udemy/kafka-streams-code/own-code/bank-balance-stream/docker-compose.yml:19) includes transaction-log settings that allow transactional/idempotent workflows to run:
+
+- `KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1`
+- `KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1`
+
+Those values are reduced for a single-node local environment. In production, these should be sized for a real multi-broker cluster.
+
 ## Data model
 
 ### Input schema: `Transaction`
